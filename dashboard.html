@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plataforma de Mantenimiento Predictivo — IoT Industrial</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    header h1 { font-size: 1.15rem; font-weight: 600; color: #f0f6ff; }
+    .badge {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .badge-live { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+    .conn-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block; margin-right: 4px;
+    }
+    .conn-ok { background: #3fb950; }
+    .conn-err { background: #f85149; }
+    .conn-status { font-size: 0.75rem; color: #8b949e; margin-left: auto; display: flex; gap: 16px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 20px;
+      padding: 20px 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* ── PANEL ESTADO PLANTA ─────────────────────────────────── */
+    .panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .panel-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #8b949e;
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+    }
+
+    .sensor-card {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      transition: border-color .3s, background .3s;
+    }
+    .sensor-card.status-OK      { border-color: #3fb950; background: #0d1117; }
+    .sensor-card.status-WARNING { border-color: #d29922; background: #1c160a; }
+    .sensor-card.status-CRITICAL { border-color: #f85149; background: #1c0a0a; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(248,81,73,.4); }
+      50%       { box-shadow: 0 0 0 6px rgba(248,81,73,0); }
+    }
+
+    .sensor-id   { font-size: 0.85rem; font-weight: 700; color: #f0f6ff; margin-bottom: 6px; }
+    .sensor-vib  { font-size: 1.4rem; font-weight: 700; }
+    .sensor-vib.OK       { color: #3fb950; }
+    .sensor-vib.WARNING  { color: #d29922; }
+    .sensor-vib.CRITICAL { color: #f85149; }
+    .sensor-status-label {
+      font-size: 0.65rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-top: 4px;
+    }
+    .label-OK       { color: #3fb950; }
+    .label-WARNING  { color: #d29922; }
+    .label-CRITICAL { color: #f85149; }
+
+    /* ── PANEL ACCIONES ──────────────────────────────────────── */
+    .actions-panel { display: flex; flex-direction: column; gap: 12px; }
+
+    .action-card {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      animation: slideIn .3s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .action-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .action-type {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .type-CRITICAL { background: #f8514922; color: #f85149; border: 1px solid #f8514966; }
+    .type-WARNING  { background: #d2992222; color: #d29922; border: 1px solid #d2992266; }
+
+    .action-sensor { font-weight: 700; color: #f0f6ff; font-size: 0.9rem; }
+    .action-vib    { font-size: 0.75rem; color: #8b949e; margin-bottom: 10px; }
+
+    .action-buttons { display: flex; flex-direction: column; gap: 6px; }
+
+    .action-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      text-align: left;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .action-btn:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
+    .action-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .action-btn.sent { background: #1f2d1f; border-color: #3fb950; color: #3fb950; }
+
+    .empty-actions {
+      color: #484f58;
+      font-size: 0.8rem;
+      text-align: center;
+      padding: 40px 0;
+    }
+
+    /* ── LOG ─────────────────────────────────────────────────── */
+    .log-panel {
+      margin: 0 24px 20px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .log-entries {
+      height: 140px;
+      overflow-y: auto;
+      font-size: 0.72rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      color: #8b949e;
+    }
+    .log-entry { padding: 1px 0; border-bottom: 1px solid #21262d; }
+    .log-entry.info    { color: #58a6ff; }
+    .log-entry.success { color: #3fb950; }
+    .log-entry.warn    { color: #d29922; }
+    .log-entry.crit    { color: #f85149; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🏭 Mantenimiento Predictivo IoT Industrial</h1>
+  <span class="badge badge-live">Live</span>
+  <div class="conn-status">
+    <span><span class="conn-dot" id="dot-plant"></span> plant_monitor :8081</span>
+    <span><span class="conn-dot" id="dot-ops"></span> operator_console :8082</span>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- MAPA DE ESTADO DE PLANTA -->
+  <div>
+    <div class="panel">
+      <div class="panel-title">Estado de la Planta — Sensores en Tiempo Real</div>
+      <div class="sensor-grid" id="sensor-grid">
+        <!-- generado dinámicamente -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ACCIONES REQUERIDAS -->
+  <div class="panel" style="overflow-y:auto; max-height: calc(100vh - 120px);">
+    <div class="panel-title">Acciones Requeridas por el Operador</div>
+    <div class="actions-panel" id="actions-panel">
+      <div class="empty-actions" id="empty-msg">Sin alertas activas. El sistema opera con normalidad.</div>
+    </div>
+  </div>
+</div>
+
+<!-- LOG GLOBAL -->
+<div class="log-panel">
+  <div class="panel-title">Log del sistema</div>
+  <div class="log-entries" id="log"></div>
+</div>
+
+<script>
+  const ACTION_DISPATCHER = 'http://localhost:8083/decide';
+  const PLANT_WS_URL      = 'ws://localhost:8081';
+  const OPS_WS_URL        = 'ws://localhost:8082';
+
+  // ── Logging ────────────────────────────────────────────────────────────────
+  const logEl = document.getElementById('log');
+  function addLog(msg, level = 'info') {
+    const d = document.createElement('div');
+    d.className = `log-entry ${level}`;
+    const ts = new Date().toLocaleTimeString('es', { hour12: false });
+    d.textContent = `[${ts}] ${msg}`;
+    logEl.prepend(d);
+    while (logEl.children.length > 120) logEl.removeChild(logEl.lastChild);
+  }
+
+  // ── Estado de la planta ────────────────────────────────────────────────────
+  const sensorGrid = document.getElementById('sensor-grid');
+  const sensorCards = {};
+
+  function ensureCard(sid) {
+    if (sensorCards[sid]) return;
+    const card = document.createElement('div');
+    card.className = 'sensor-card status-OK';
+    card.id = `card-${sid}`;
+    card.innerHTML = `
+      <div class="sensor-id">${sid.replace('sensor_', 'Sensor ').toUpperCase()}</div>
+      <div class="sensor-vib OK" id="vib-${sid}">—</div>
+      <div class="sensor-status-label label-OK" id="lbl-${sid}">OK</div>
+    `;
+    sensorGrid.appendChild(card);
+    sensorCards[sid] = card;
+  }
+
+  function updateSensor(sid, data) {
+    ensureCard(sid);
+    const card   = sensorCards[sid];
+    const vibEl  = document.getElementById(`vib-${sid}`);
+    const lblEl  = document.getElementById(`lbl-${sid}`);
+    const status = data.status || 'OK';
+
+    card.className = `sensor-card status-${status}`;
+    vibEl.className = `sensor-vib ${status}`;
+    vibEl.textContent = data.vibration != null ? data.vibration.toFixed(1) : '—';
+    lblEl.className = `sensor-status-label label-${status}`;
+    lblEl.textContent = status;
+  }
+
+  // ── WebSocket plant_monitor ────────────────────────────────────────────────
+  function connectPlant() {
+    const ws = new WebSocket(PLANT_WS_URL);
+    const dot = document.getElementById('dot-plant');
+
+    ws.onopen  = () => { dot.className = 'conn-dot conn-ok'; addLog('Conectado a plant_monitor_backend'); };
+    ws.onclose = () => {
+      dot.className = 'conn-dot conn-err';
+      addLog('Reconectando a plant_monitor...', 'warn');
+      setTimeout(connectPlant, 3000);
+    };
+    ws.onerror = () => dot.className = 'conn-dot conn-err';
+
+    ws.onmessage = ({ data }) => {
+      const msg = JSON.parse(data);
+      if (msg.type === 'plant_state') {
+        for (const [sid, sdata] of Object.entries(msg.sensors)) {
+          updateSensor(sid, sdata);
+        }
+      }
+    };
+  }
+
+  // ── WebSocket operator_console ─────────────────────────────────────────────
+  const actionsPanel = document.getElementById('actions-panel');
+  const emptyMsg     = document.getElementById('empty-msg');
+  const pendingAlerts = new Map();   // alert_id -> card element
+
+  function connectOps() {
+    const ws  = new WebSocket(OPS_WS_URL);
+    const dot = document.getElementById('dot-ops');
+
+    ws.onopen  = () => { dot.className = 'conn-dot conn-ok'; addLog('Conectado a operator_console_backend'); };
+    ws.onclose = () => {
+      dot.className = 'conn-dot conn-err';
+      addLog('Reconectando a operator_console...', 'warn');
+      setTimeout(connectOps, 3000);
+    };
+    ws.onerror = () => dot.className = 'conn-dot conn-err';
+
+    ws.onmessage = ({ data }) => {
+      const msg = JSON.parse(data);
+      if (msg.type === 'action_required') renderActionCard(msg);
+    };
+  }
+
+  function renderActionCard(alert) {
+    if (pendingAlerts.has(alert.alert_id)) return;   // ya existe
+
+    emptyMsg.style.display = 'none';
+
+    const isCrit = alert.type === 'CRITICAL';
+    const card   = document.createElement('div');
+    card.className = 'action-card';
+    card.dataset.alertId = alert.alert_id;
+
+    const vib = alert.vibration != null ? `Vibración: ${Number(alert.vibration).toFixed(1)}` : '';
+    const sensorLabel = alert.sensor_id.replace('sensor_', 'Sensor ').toUpperCase();
+
+    const buttonsHtml = (alert.options || []).map(opt => `
+      <button class="action-btn" data-action="${opt}" onclick="sendDecision(this, '${alert.alert_id}', '${alert.sensor_id}')">
+        ${formatOption(opt)}
+      </button>
+    `).join('');
+
+    card.innerHTML = `
+      <div class="action-header">
+        <span class="action-type type-${alert.type}">${alert.type}</span>
+        <span class="action-sensor">${sensorLabel}</span>
+      </div>
+      <div class="action-vib">${vib}</div>
+      <div class="action-buttons">${buttonsHtml}</div>
+    `;
+
+    actionsPanel.prepend(card);
+    pendingAlerts.set(alert.alert_id, card);
+
+    const level = isCrit ? 'crit' : 'warn';
+    addLog(`Acción requerida: ${sensorLabel} — ${alert.type} — ${alert.options.join(' / ')}`, level);
+  }
+
+  function formatOption(opt) {
+    const map = {
+      'APAGADO_INMEDIATO':              '🔴 Apagado Inmediato',
+      'IGNORAR_10_MINUTOS':             '⏱ Ignorar 10 minutos',
+      'PROGRAMAR_MANTENIMIENTO_AHORA':  '🔧 Programar Mantenimiento Ahora',
+      'RECONOCER_Y_ESPERAR_24H':        '📅 Reconocer y Esperar 24 h',
+    };
+    return map[opt] || opt;
+  }
+
+  async function sendDecision(btn, alertId, sensorId) {
+    const action   = btn.dataset.action;
+    const card     = pendingAlerts.get(alertId);
+
+    // Deshabilitar todos los botones de esta tarjeta
+    card.querySelectorAll('.action-btn').forEach(b => b.disabled = true);
+    btn.classList.add('sent');
+    btn.textContent = `✔ ${formatOption(action)} (enviado)`;
+
+    addLog(`Decisión enviada: ${action} — sensor ${sensorId}`, 'success');
+
+    try {
+      const res = await fetch(ACTION_DISPATCHER, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alert_id: alertId, sensor_id: sensorId, chosen_action: action }),
+      });
+      const json = await res.json();
+      addLog(`action_dispatcher respondió: ${JSON.stringify(json)}`, 'success');
+    } catch (e) {
+      addLog(`Error al enviar decisión: ${e.message}`, 'crit');
+    }
+
+    // Eliminar la tarjeta después de 4 segundos
+    setTimeout(() => {
+      card.style.opacity = '0';
+      card.style.transition = 'opacity .4s';
+      setTimeout(() => {
+        card.remove();
+        pendingAlerts.delete(alertId);
+        if (pendingAlerts.size === 0) emptyMsg.style.display = '';
+      }, 400);
+    }, 4000);
+  }
+
+  // ── Iniciar conexiones ─────────────────────────────────────────────────────
+  connectPlant();
+  connectOps();
+</script>
+</body>
+</html>

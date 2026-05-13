@@ -1,0 +1,128 @@
+version: "3.8"
+
+networks:
+  iot_net:
+    driver: bridge
+
+services:
+  # ─── INFRAESTRUCTURA ─────────────────────────────────────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    networks: [iot_net]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    networks: [iot_net]
+    depends_on: [zookeeper]
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    networks: [iot_net]
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    # Instala el plugin de delayed message al arrancar
+    command: >
+      bash -c "
+        rabbitmq-plugins enable --offline rabbitmq_delayed_message_exchange &&
+        rabbitmq-server
+      "
+
+  # ─── MICROSERVICIOS ───────────────────────────────────────────────────────────
+
+  sensor_producer:
+    build: ./services/sensor_producer
+    container_name: sensor_producer
+    networks: [iot_net]
+    depends_on: [kafka]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    restart: on-failure
+
+  alert_detector:
+    build: ./services/alert_detector
+    container_name: alert_detector
+    networks: [iot_net]
+    depends_on: [kafka]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    restart: on-failure
+
+  alert_router:
+    build: ./services/alert_router
+    container_name: alert_router
+    networks: [iot_net]
+    depends_on: [kafka, rabbitmq]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      RABBITMQ_HOST: rabbitmq
+    restart: on-failure
+
+  plant_monitor_backend:
+    build: ./services/plant_monitor_backend
+    container_name: plant_monitor_backend
+    networks: [iot_net]
+    depends_on: [kafka]
+    ports:
+      - "8081:8081"
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    restart: on-failure
+
+  operator_console_backend:
+    build: ./services/operator_console_backend
+    container_name: operator_console_backend
+    networks: [iot_net]
+    depends_on: [rabbitmq]
+    ports:
+      - "8082:8082"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    restart: on-failure
+
+  action_dispatcher:
+    build: ./services/action_dispatcher
+    container_name: action_dispatcher
+    networks: [iot_net]
+    depends_on: [rabbitmq]
+    ports:
+      - "8083:8083"
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    restart: on-failure
+
+  actuator_worker:
+    build: ./services/actuator_worker
+    container_name: actuator_worker
+    networks: [iot_net]
+    depends_on: [rabbitmq]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    restart: on-failure
+
+  maintenance_worker:
+    build: ./services/maintenance_worker
+    container_name: maintenance_worker
+    networks: [iot_net]
+    depends_on: [rabbitmq]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    restart: on-failure
