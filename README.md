@@ -247,6 +247,13 @@ docker compose up --build
 
 La primera ejecución puede tardar entre dos y tres minutos. Los microservicios aplican un mecanismo de reintento con 20 intentos y espera de 5 segundos entre cada uno, lo que permite que Kafka y RabbitMQ completen su inicialización antes de que los servicios dependientes intenten conectarse.
 
+Para correr en segundo plano y ver logs luego:
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+```
+
 ### Interfaces de acceso
 
 | Interfaz | URL | Descripción |
@@ -255,43 +262,246 @@ La primera ejecución puede tardar entre dos y tres minutos. Los microservicios 
 | Panel de administración RabbitMQ | `http://localhost:15672` | Usuario: `guest` / Contraseña: `guest` |
 | API action_dispatcher | `http://localhost:8083/decide` | Endpoint POST para enviar decisiones |
 
+### Comandos útiles de gestión
+
+```bash
+# Ver estado de todos los contenedores
+docker compose ps
+
+# Ver logs de un servicio específico
+docker compose logs -f alert_detector
+docker compose logs -f actuator_worker
+docker compose logs -f maintenance_worker
+
+# Reiniciar un servicio sin bajar el stack
+docker compose restart alert_detector
+
+# Detener todo el sistema
+docker compose down
+
+# Detener y eliminar volúmenes (reset completo)
+docker compose down -v
+```
+
 ---
 
 ## Cómo Probar el Sistema
 
-### Opción 1: Script de prueba automatizado
+### Opción 1: Suite de pruebas automatizada completa
 
 ```bash
+chmod +x test.sh
+
+# Ejecutar todas las secciones
 ./test.sh
+
+# O ejecutar solo una sección específica
+./test.sh docker    # estado de contenedores y recursos
+./test.sh kafka     # topics, particiones y consumer groups
+./test.sh rabbit    # exchanges, colas, bindings y plugins
+./test.sh api       # pruebas de integración del action_dispatcher
 ```
 
-El script envía cuatro solicitudes al `action_dispatcher` y verifica el enrutamiento correcto hacia cada cola.
-
-### Opción 2: Enviar una decisión manualmente con curl
+### Opción 2: Pruebas de Docker
 
 ```bash
-# Simular apagado inmediato
-curl -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{"alert_id":"manual-001","sensor_id":"sensor_A","chosen_action":"APAGADO_INMEDIATO","type":"CRITICAL"}'
+# Estado de los 10 contenedores
+docker compose ps
 
-# Simular programación de mantenimiento
-curl -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{"alert_id":"manual-002","sensor_id":"sensor_B","chosen_action":"PROGRAMAR_MANTENIMIENTO_AHORA","type":"WARNING"}'
+# Uso de CPU y memoria en tiempo real
+docker stats sensor_producer alert_detector alert_router \
+  plant_monitor_backend operator_console_backend action_dispatcher \
+  actuator_worker maintenance_worker kafka rabbitmq
+
+# Inspeccionar la red interna iot_net
+docker network inspect iot-predictivo_iot_net
+
+# Verificar que el plugin delayed_message_exchange está activo
+docker compose exec rabbitmq rabbitmq-plugins list --enabled
 ```
 
-### Opción 3: Flujo completo desde el dashboard
+### Opción 3: Pruebas de Kafka
 
-1. Abrir `dashboard.html` en el navegador con el sistema corriendo
-2. Observar cómo los sensores aparecen en el mapa con sus valores de vibración en tiempo real
-3. Esperar a que un sensor alcance un umbral de alerta (los picos ocurren aproximadamente cada 15-20 segundos dada la distribución estadística del productor)
-4. Cuando aparezca una tarjeta de "Acción Requerida" en el panel derecho, hacer clic en una de las opciones
-5. Verificar en los logs del `actuator_worker` o `maintenance_worker` que la acción fue recibida y ejecutada
+```bash
+# Listar todos los topics creados por el sistema
+docker compose exec kafka \
+  kafka-topics --bootstrap-server localhost:9092 --list
 
-### Comportamiento esperado
+# Ver detalle (particiones y réplicas) de un topic
+docker compose exec kafka \
+  kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic sensor_data
 
-Tras un pico de vibración crítico en el sensor, en el dashboard el sensor cambia a rojo con animación pulsante. Simultáneamente aparece una tarjeta de acción con dos botones generados dinámicamente. Al elegir "Apagado Inmediato", el log del sistema muestra la confirmación del `action_dispatcher` y los logs del `actuator_worker` en Docker imprimen el simulacro de desconexión del sensor. Si se elige una acción diferida de 24 horas, el `maintenance_worker` no imprime nada hasta que transcurra ese tiempo (verificable en la UI de RabbitMQ como un mensaje en cola con delay activo).
+# Consumir mensajes de telemetría en tiempo real (Ctrl+C para salir)
+docker compose exec kafka \
+  kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic sensor_data
+
+# Consumir alertas críticas en tiempo real
+docker compose exec kafka \
+  kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic alerts_critical
+
+# Consumir alertas de advertencia en tiempo real
+docker compose exec kafka \
+  kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic alerts_warning
+
+# Ver los consumer groups registrados
+docker compose exec kafka \
+  kafka-consumer-groups --bootstrap-server localhost:9092 --list
+
+# Ver el lag del consumidor stateful (alert_detector)
+# El lag indica cuántos mensajes están pendientes de procesar
+docker compose exec kafka \
+  kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --describe --group alert_detector_group
+
+# Ver el lag del consumidor del dashboard de estado
+docker compose exec kafka \
+  kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --describe --group plant_monitor_group
+
+# Ver el lag del alert_router (puente Kafka→RabbitMQ)
+docker compose exec kafka \
+  kafka-consumer-groups --bootstrap-server localhost:9092 \
+  --describe --group alert_router_group
+```
+
+### Opción 4: Pruebas de RabbitMQ (Management API)
+
+```bash
+# Ver todos los exchanges declarados
+curl -s -u guest:guest http://localhost:15672/api/exchanges/%2F \
+  | python3 -m json.tool
+
+# Verificar que el Fanout Exchange human_alerts existe
+curl -s -u guest:guest \
+  http://localhost:15672/api/exchanges/%2F/human_alerts
+
+# Verificar que el Delayed Exchange delayed_actions existe
+curl -s -u guest:guest \
+  http://localhost:15672/api/exchanges/%2F/delayed_actions
+
+# Ver todas las colas con conteo de mensajes
+curl -s -u guest:guest http://localhost:15672/api/queues/%2F \
+  | python3 -m json.tool
+
+# Ver mensajes en critical_actions_queue
+curl -s -u guest:guest \
+  http://localhost:15672/api/queues/%2F/critical_actions_queue
+
+# Ver mensajes en maintenance_queue
+curl -s -u guest:guest \
+  http://localhost:15672/api/queues/%2F/maintenance_queue
+
+# Ver bindings del Fanout Exchange (cuántos consumidores están vinculados)
+curl -s -u guest:guest \
+  "http://localhost:15672/api/exchanges/%2F/human_alerts/bindings/source" \
+  | python3 -m json.tool
+
+# Ver conexiones activas al broker
+curl -s -u guest:guest http://localhost:15672/api/connections \
+  | python3 -m json.tool
+
+# Ver canales activos
+curl -s -u guest:guest http://localhost:15672/api/channels \
+  | python3 -m json.tool
+
+# Publicar un mensaje de prueba directamente en critical_actions_queue
+# (simula que action_dispatcher ya enrutó una decisión)
+curl -s -u guest:guest \
+  -X POST http://localhost:15672/api/exchanges/%2F/amq.default/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "properties": {"delivery_mode": 2},
+    "routing_key": "critical_actions_queue",
+    "payload": "{\"alert_id\":\"rabbit-test\",\"sensor_id\":\"sensor_Z\",\"chosen_action\":\"APAGADO_INMEDIATO\"}",
+    "payload_encoding": "string"
+  }'
+```
+
+### Opción 5: Pruebas de integración del action_dispatcher
+
+```bash
+# Test 1: APAGADO_INMEDIATO → critical_actions_queue (inmediato)
+curl -s -X POST http://localhost:8083/decide \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_id": "test-001",
+    "sensor_id": "sensor_A",
+    "chosen_action": "APAGADO_INMEDIATO",
+    "type": "CRITICAL"
+  }' | python3 -m json.tool
+
+# Test 2: PROGRAMAR_MANTENIMIENTO_AHORA → maintenance_queue (inmediato)
+curl -s -X POST http://localhost:8083/decide \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_id": "test-002",
+    "sensor_id": "sensor_B",
+    "chosen_action": "PROGRAMAR_MANTENIMIENTO_AHORA",
+    "type": "WARNING"
+  }' | python3 -m json.tool
+
+# Test 3: RECONOCER_Y_ESPERAR_24H → delayed_actions (x-delay: 86400000 ms)
+# Verificar en RabbitMQ UI que el mensaje queda "encolado con delay"
+curl -s -X POST http://localhost:8083/decide \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_id": "test-003",
+    "sensor_id": "sensor_C",
+    "chosen_action": "RECONOCER_Y_ESPERAR_24H",
+    "type": "WARNING"
+  }' | python3 -m json.tool
+
+# Test 4: IGNORAR_10_MINUTOS → delayed_actions (x-delay: 600000 ms)
+curl -s -X POST http://localhost:8083/decide \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_id": "test-004",
+    "sensor_id": "sensor_D",
+    "chosen_action": "IGNORAR_10_MINUTOS",
+    "type": "CRITICAL"
+  }' | python3 -m json.tool
+
+# Test 5: Acción inválida (debe retornar HTTP 400)
+curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
+  -X POST http://localhost:8083/decide \
+  -H "Content-Type: application/json" \
+  -d '{"chosen_action": "ACCION_INEXISTENTE"}'
+```
+
+### Opción 6: Flujo completo desde el dashboard
+
+1. Levantar el sistema con `docker compose up --build`
+2. Abrir `dashboard.html` en el navegador (doble clic en el archivo)
+3. Observar cómo los 10 sensores aparecen en el mapa con sus valores de vibración actualizándose cada segundo
+4. Esperar a que un sensor alcance un umbral de alerta. Los picos ocurren aproximadamente cada 15–20 segundos según la distribución estadística del productor
+5. Cuando aparezca una tarjeta de "Acción Requerida" en el panel derecho, hacer clic en una de las opciones generadas dinámicamente
+6. Verificar el resultado en los logs de Docker
+
+```bash
+# Ver el apagado ejecutado por el actuator_worker
+docker compose logs actuator_worker
+
+# Ver la orden de mantenimiento creada por el maintenance_worker
+docker compose logs maintenance_worker
+```
+
+### Comportamiento esperado por escenario
+
+| Escenario | Dashboard | actuator_worker | maintenance_worker |
+|---|---|---|---|
+| Vibración > 90 (Regla 1) | Sensor en rojo pulsante + tarjeta CRITICAL | — | — |
+| Operador elige APAGADO_INMEDIATO | Tarjeta desaparece (4s) | Imprime simulacro de apagado | — |
+| Operador elige IGNORAR_10_MINUTOS | Tarjeta desaparece (4s) | — | Imprime orden tras 10 min |
+| 3 lecturas > 75 (Regla 2) | Sensor en amarillo + tarjeta WARNING | — | — |
+| Operador elige PROGRAMAR_MANTENIMIENTO_AHORA | Tarjeta desaparece (4s) | — | Imprime orden inmediatamente |
+| Operador elige RECONOCER_Y_ESPERAR_24H | Tarjeta desaparece (4s) | — | Imprime orden tras 24 h |
 
 ---
 

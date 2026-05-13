@@ -10,6 +10,7 @@ Despachador de acciones.
 """
 import os, json, time, logging
 from aiohttp import web
+from aiohttp.web_middlewares import middleware
 import pika
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [action_dispatcher] %(message)s")
@@ -127,10 +128,26 @@ async def handle_decide(request: web.Request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+@middleware
+async def cors_middleware(request: web.Request, handler):
+    """Permite peticiones desde file:// y cualquier origen (dashboard local)."""
+    if request.method == "OPTIONS":
+        return web.Response(headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
+    response = await handler(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
 async def main_async():
     init_rabbit()
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app.router.add_post("/decide", handle_decide)
+    app.router.add_route("OPTIONS", "/decide", lambda r: web.Response())
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)
