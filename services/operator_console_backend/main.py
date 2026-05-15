@@ -48,6 +48,7 @@ def start_rabbit_consumer(loop: asyncio.AbstractEventLoop):
 
 
 async def alert_broadcaster():
+    global connected_clients
     while True:
         alert = await _alert_queue.get()
         payload = json.dumps({"type": "action_required", **alert})

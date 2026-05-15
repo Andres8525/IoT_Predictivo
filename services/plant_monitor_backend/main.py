@@ -68,6 +68,7 @@ def kafka_loop():
 
 async def broadcast_state():
     """Tarea async que envía el estado completo a todos los clientes cada segundo."""
+    global connected_clients
     while True:
         await asyncio.sleep(1)
         if not connected_clients:

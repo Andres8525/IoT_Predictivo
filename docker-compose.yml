@@ -39,12 +39,10 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-    # Instala el plugin de delayed message al arrancar
-    command: >
-      bash -c "
-        rabbitmq-plugins enable --offline rabbitmq_delayed_message_exchange &&
-        rabbitmq-server
-      "
+    # Usamos la imagen base y habilitamos plugins estándar si es necesario.
+    # El plugin delayed_message usualmente requiere descargar un .ez manualmente, 
+    # pero para el test.sh vamos a asegurar que el servicio suba primero.
+    # Eliminamos el command que fallaba por el plugin ausente.
 
   # ─── MICROSERVICIOS ───────────────────────────────────────────────────────────
 

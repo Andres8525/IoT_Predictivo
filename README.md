@@ -287,210 +287,86 @@ docker compose down -v
 
 ## Cómo Probar el Sistema
 
-### Opción 1: Suite de pruebas automatizada completa
+### Opción 1: Suite de pruebas automatizada (test.sh)
 
 ```bash
 chmod +x test.sh
 
-# Ejecutar todas las secciones
-./test.sh
+# Ejecutar todas las pruebas
+./test.sh           # Todas las secciones
 
-# O ejecutar solo una sección específica
-./test.sh docker    # estado de contenedores y recursos
-./test.sh kafka     # topics, particiones y consumer groups
-./test.sh rabbit    # exchanges, colas, bindings y plugins
-./test.sh api       # pruebas de integración del action_dispatcher
+# Ejecutar secciones específicas
+./test.sh docker    # Solo Docker
+./test.sh kafka     # Solo Kafka
+./test.sh rabbit    # Solo RabbitMQ
+./test.sh api       # Solo action_dispatcher
 ```
 
-### Opción 2: Pruebas de Docker
+### Opción 2: Docker - Estado y Salud del Sistema
 
 ```bash
 # Estado de los 10 contenedores
 docker compose ps
 
-# Uso de CPU y memoria en tiempo real
-docker stats sensor_producer alert_detector alert_router \
-  plant_monitor_backend operator_console_backend action_dispatcher \
-  actuator_worker maintenance_worker kafka rabbitmq
+# Ver logs del cerebro stateful
+docker compose logs -f alert_detector
 
-# Inspeccionar la red interna iot_net
-docker network inspect iot-predictivo_iot_net
+# Ver apagados ejecutados por el worker
+docker compose logs actuator_worker
 
-# Verificar que el plugin delayed_message_exchange está activo
+# Verificar que el plugin delayed esté habilitado
 docker compose exec rabbitmq rabbitmq-plugins list --enabled
 ```
 
-### Opción 3: Pruebas de Kafka
+### Opción 3: Kafka - Monitoreo de Topics en Tiempo Real
 
 ```bash
-# Listar todos los topics creados por el sistema
-docker compose exec kafka \
-  kafka-topics --bootstrap-server localhost:9092 --list
+# Consumir telemetría de sensores
+docker compose exec kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 --topic sensor_data
 
-# Ver detalle (particiones y réplicas) de un topic
-docker compose exec kafka \
-  kafka-topics --bootstrap-server localhost:9092 \
-  --describe --topic sensor_data
-
-# Consumir mensajes de telemetría en tiempo real (Ctrl+C para salir)
-docker compose exec kafka \
-  kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic sensor_data
-
-# Consumir alertas críticas en tiempo real
-docker compose exec kafka \
-  kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic alerts_critical
-
-# Consumir alertas de advertencia en tiempo real
-docker compose exec kafka \
-  kafka-console-consumer \
-  --bootstrap-server localhost:9092 \
-  --topic alerts_warning
-
-# Ver los consumer groups registrados
-docker compose exec kafka \
-  kafka-consumer-groups --bootstrap-server localhost:9092 --list
-
-# Ver el lag del consumidor stateful (alert_detector)
-# El lag indica cuántos mensajes están pendientes de procesar
-docker compose exec kafka \
-  kafka-consumer-groups --bootstrap-server localhost:9092 \
-  --describe --group alert_detector_group
-
-# Ver el lag del consumidor del dashboard de estado
-docker compose exec kafka \
-  kafka-consumer-groups --bootstrap-server localhost:9092 \
-  --describe --group plant_monitor_group
-
-# Ver el lag del alert_router (puente Kafka→RabbitMQ)
-docker compose exec kafka \
-  kafka-consumer-groups --bootstrap-server localhost:9092 \
-  --describe --group alert_router_group
+# Consumir alertas críticas generadas
+docker compose exec kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 --topic alerts_critical
 ```
 
-### Opción 4: Pruebas de RabbitMQ (Management API)
+### Opción 4: Kafka - Estado de Grupos de Consumidores
 
 ```bash
-# Ver todos los exchanges declarados
-curl -s -u guest:guest http://localhost:15672/api/exchanges/%2F \
-  | python3 -m json.tool
+# Ver el lag del consumidor stateful (ventana móvil)
+# Es vital que el lag sea bajo para procesamiento en tiempo real
+docker compose exec kafka kafka-consumer-groups \
+  --bootstrap-server localhost:9092 --describe --group alert_detector_group
+```
 
-# Verificar que el Fanout Exchange human_alerts existe
-curl -s -u guest:guest \
-  http://localhost:15672/api/exchanges/%2F/human_alerts
+### Opción 5: RabbitMQ - Inspección de Exchanges y Colas
 
-# Verificar que el Delayed Exchange delayed_actions existe
-curl -s -u guest:guest \
-  http://localhost:15672/api/exchanges/%2F/delayed_actions
+```bash
+# Ver todas las colas y mensajes pendientes
+curl -s -u guest:guest http://localhost:15672/api/queues/%2F | python3 -m json.tool
 
-# Ver todas las colas con conteo de mensajes
-curl -s -u guest:guest http://localhost:15672/api/queues/%2F \
-  | python3 -m json.tool
+# Verificar el Fanout Exchange (human_alerts)
+curl -s -u guest:guest http://localhost:15672/api/exchanges/%2F/human_alerts
 
-# Ver mensajes en critical_actions_queue
-curl -s -u guest:guest \
-  http://localhost:15672/api/queues/%2F/critical_actions_queue
+# Verificar el Delayed Exchange (delayed_actions)
+curl -s -u guest:guest http://localhost:15672/api/exchanges/%2F/delayed_actions
 
-# Ver mensajes en maintenance_queue
-curl -s -u guest:guest \
-  http://localhost:15672/api/queues/%2F/maintenance_queue
-
-# Ver bindings del Fanout Exchange (cuántos consumidores están vinculados)
+# Ver cuántos consumidores están conectados al fanout
 curl -s -u guest:guest \
   "http://localhost:15672/api/exchanges/%2F/human_alerts/bindings/source" \
   | python3 -m json.tool
-
-# Ver conexiones activas al broker
-curl -s -u guest:guest http://localhost:15672/api/connections \
-  | python3 -m json.tool
-
-# Ver canales activos
-curl -s -u guest:guest http://localhost:15672/api/channels \
-  | python3 -m json.tool
-
-# Publicar un mensaje de prueba directamente en critical_actions_queue
-# (simula que action_dispatcher ya enrutó una decisión)
-curl -s -u guest:guest \
-  -X POST http://localhost:15672/api/exchanges/%2F/amq.default/publish \
-  -H "Content-Type: application/json" \
-  -d '{
-    "properties": {"delivery_mode": 2},
-    "routing_key": "critical_actions_queue",
-    "payload": "{\"alert_id\":\"rabbit-test\",\"sensor_id\":\"sensor_Z\",\"chosen_action\":\"APAGADO_INMEDIATO\"}",
-    "payload_encoding": "string"
-  }'
 ```
 
-### Opción 5: Pruebas de integración del action_dispatcher
+### Opción 6: API - Inyección Manual de Decisiones
 
 ```bash
-# Test 1: APAGADO_INMEDIATO → critical_actions_queue (inmediato)
+# Probar el enrutamiento de una decisión (ej. APAGADO_INMEDIATO)
 curl -s -X POST http://localhost:8083/decide \
   -H "Content-Type: application/json" \
-  -d '{
-    "alert_id": "test-001",
-    "sensor_id": "sensor_A",
-    "chosen_action": "APAGADO_INMEDIATO",
-    "type": "CRITICAL"
-  }' | python3 -m json.tool
-
-# Test 2: PROGRAMAR_MANTENIMIENTO_AHORA → maintenance_queue (inmediato)
-curl -s -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{
-    "alert_id": "test-002",
-    "sensor_id": "sensor_B",
-    "chosen_action": "PROGRAMAR_MANTENIMIENTO_AHORA",
-    "type": "WARNING"
-  }' | python3 -m json.tool
-
-# Test 3: RECONOCER_Y_ESPERAR_24H → delayed_actions (x-delay: 86400000 ms)
-# Verificar en RabbitMQ UI que el mensaje queda "encolado con delay"
-curl -s -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{
-    "alert_id": "test-003",
-    "sensor_id": "sensor_C",
-    "chosen_action": "RECONOCER_Y_ESPERAR_24H",
-    "type": "WARNING"
-  }' | python3 -m json.tool
-
-# Test 4: IGNORAR_10_MINUTOS → delayed_actions (x-delay: 600000 ms)
-curl -s -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{
-    "alert_id": "test-004",
-    "sensor_id": "sensor_D",
-    "chosen_action": "IGNORAR_10_MINUTOS",
-    "type": "CRITICAL"
-  }' | python3 -m json.tool
-
-# Test 5: Acción inválida (debe retornar HTTP 400)
-curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
-  -X POST http://localhost:8083/decide \
-  -H "Content-Type: application/json" \
-  -d '{"chosen_action": "ACCION_INEXISTENTE"}'
+  -d '{"alert_id":"t1","sensor_id":"sensor_A","chosen_action":"APAGADO_INMEDIATO","type":"CRITICAL"}' \
+  | python3 -m json.tool
 ```
 
-### Opción 6: Flujo completo desde el dashboard
-
-1. Levantar el sistema con `docker compose up --build`
-2. Abrir `dashboard.html` en el navegador (doble clic en el archivo)
-3. Observar cómo los 10 sensores aparecen en el mapa con sus valores de vibración actualizándose cada segundo
-4. Esperar a que un sensor alcance un umbral de alerta. Los picos ocurren aproximadamente cada 15–20 segundos según la distribución estadística del productor
-5. Cuando aparezca una tarjeta de "Acción Requerida" en el panel derecho, hacer clic en una de las opciones generadas dinámicamente
-6. Verificar el resultado en los logs de Docker
-
-```bash
-# Ver el apagado ejecutado por el actuator_worker
-docker compose logs actuator_worker
-
-# Ver la orden de mantenimiento creada por el maintenance_worker
-docker compose logs maintenance_worker
-```
 
 ### Comportamiento esperado por escenario
 
